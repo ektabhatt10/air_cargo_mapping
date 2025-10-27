@@ -291,7 +291,7 @@ if "assignments_df" in st.session_state and "container_specs_dict" in st.session
             st.plotly_chart(fig3d, use_container_width=True)
 
     # --- Export Results ---
-    with open("container_packing_results.xlsx", "rb") as f:
+    with open("optimization_results.xlsx", "rb") as f:
         st.download_button(
             label="📥 Download Results as Excel",
             data=f.read(),
@@ -303,3 +303,4 @@ if st.button("🔄 Reset"):
     st.session_state.clear()
 
     st.rerun()
+
