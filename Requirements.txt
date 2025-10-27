@@ -1,5 +1,6 @@
-streamlit
 pandas
 plotly
-fpdf
-openpyxl
+streamlit
+yfinance
+pandas-datareader
+prophet
