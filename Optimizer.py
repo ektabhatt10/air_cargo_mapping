@@ -6,6 +6,8 @@ def run_optimization(parcels_df, containers_df, settings, sharing_allowed):
     import numpy as np
 
     # Read Excel files
+    parcels_df = pd.read_excel("parcels.xlsx")
+    containers_df = pd.read_excel("containers.xlsx")
 
     # Preview the data
     print("Parcels:")
@@ -494,12 +496,18 @@ def run_optimization(parcels_df, containers_df, settings, sharing_allowed):
                 Lp, Wp, Hp = orientation
 
                 # --- Generate candidate positions ---
-                candidate_positions = [(0, 0, 0)]
+                # Wall clearance
+                wall_L = float(settings.get("wall_clearance_L_cm", 0))
+                wall_W = float(settings.get("wall_clearance_W_cm", 0))
+                wall_H = float(settings.get("wall_clearance_H_cm", 0))
+                
+                # Inter-box clearance
+                inter_L = float(settings.get("inter_box_clearance_L_cm", 0))
+                inter_W = float(settings.get("inter_row_clearance_W_cm", 0))
+                candidate_positions = [(wall_L, wall_W, 0)]
                 for existing in placed_parcels:
                     ex, ey, ez = existing["X"], existing["Y"], existing["Z"]
                     eL, eW, eH = existing["L"], existing["W"], existing["H"]
-                    inter_L = float(settings["inter_box_clearance_L_cm"])
-                    inter_W = float(settings["inter_row_clearance_W_cm"])
 
                     candidate_positions.append((ex + eL + inter_L, ey, ez))
                     candidate_positions.append((ex, ey + eW + inter_W, ez))
@@ -631,7 +639,7 @@ def run_optimization(parcels_df, containers_df, settings, sharing_allowed):
         display(unplaceable_df[["ParcelID", "L (cm)", "W (cm)", "H (cm)", "Weight (kg)"]])
       
     # --- Export both DataFrames to Excel ---
-    output_path = "optimization_results.xlsx"
+    output_path = "C:/Users/ektab/container_packing_results.xlsx"
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
         assignments_df.to_excel(writer, index=False, sheet_name="ParcelAssignments")
         container_summary_df.to_excel(writer, index=False, sheet_name="ContainerSummary")
