@@ -635,7 +635,7 @@ def run_optimization(parcels_df, containers_df, settings, sharing_allowed):
         display(unplaceable_df[["ParcelID", "L (cm)", "W (cm)", "H (cm)", "Weight (kg)"]])
       
     # --- Export both DataFrames to Excel ---
-    output_path = "C:/Users/ektab/container_packing_results.xlsx"
+    output_path = "optimization_results.xlsx"
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
         assignments_df.to_excel(writer, index=False, sheet_name="ParcelAssignments")
         container_summary_df.to_excel(writer, index=False, sheet_name="ContainerSummary")
