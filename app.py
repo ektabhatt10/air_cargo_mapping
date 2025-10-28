@@ -152,14 +152,17 @@ if "assignments_df" in st.session_state and "container_specs_dict" in st.session
     st.dataframe(assignments_df)
 
     total_parcels = len(assignments_df)
+    placed_df = assignments_df[assignments_df["ContainerID"].notnull()]
     containers_used = assignments_df["ContainerID"].nunique()
 
     st.subheader("📦 Container Summary")
-    colA, colB = st.columns(2)
-    with colA:
-        st.metric("Total Parcels Assigned", total_parcels)
-    with colB:
-        st.metric("Containers Used", containers_used)
+    colA, colB, colC, colD = st.columns(4)
+    colA.metric("Total Parcels",total_parcels)
+    colB.metric(f"Placed Parcels",len(placed_df))
+    colC.metric("Containers Used",containers_used)
+    for cid in placed_df["ContainerID"].unique():
+        count = len(placed_df[placed_df["ContainerID"] == cid])
+        colD.metric(f"Parcels in {str(cid)}", count)
 
     # 📦 Container Summary Table
     summary_rows = []
@@ -303,4 +306,5 @@ if st.button("🔄 Reset"):
     st.session_state.clear()
 
     st.rerun()
+
 
