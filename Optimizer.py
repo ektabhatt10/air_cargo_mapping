@@ -5,10 +5,6 @@ def run_optimization(parcels_df, containers_df, settings, sharing_allowed):
     import pandas as pd
     import numpy as np
 
-    # Read Excel files
-    parcels_df = pd.read_excel("parcels.xlsx")
-    containers_df = pd.read_excel("containers.xlsx")
-
     # Preview the data
     print("Parcels:")
     import streamlit as st
