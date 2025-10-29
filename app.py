@@ -68,6 +68,7 @@ if parcel_file:
 
 if container_file:
     containers_df = pd.read_excel(container_file, sheet_name="Containers")
+    containers_df = containers_df[containers_df["Qty"] > 0]
     st.write("🚚 Containers Preview")
     st.dataframe(containers_df)
 
@@ -307,6 +308,7 @@ if st.button("🔄 Reset"):
     st.session_state.clear()
 
     st.rerun()
+
 
 
 
