@@ -538,6 +538,7 @@ def run_optimization(parcels_df, containers_df, settings, sharing_allowed):
                         break
 
         # --- Place parcel if a fit was found ---
+        current_leftover = best_fit["ContainerTotalVol"] - container_used_vol[cid]
         if best_fit:
             cid = best_fit["ContainerID"]
             container_3D_state[cid].append({
@@ -564,6 +565,7 @@ def run_optimization(parcels_df, containers_df, settings, sharing_allowed):
                 "Weight_kg": parcel["Weight (kg)"],
                 "Brand": parcel["Brand"],
                 "ContainerID": cid,
+                "Container Brand":container_brand_map.get(cid, "Unknown"),
                 "Orientation": best_fit["Orientation"],
                 "Position": best_fit["Position"],
                 "LeftoverVolume": current_leftover,
@@ -578,6 +580,7 @@ def run_optimization(parcels_df, containers_df, settings, sharing_allowed):
                 "Height_cm": parcel["H (cm)"],
                 "Weight_kg": parcel["Weight (kg)"],
                 "Brand": parcel["Brand"],
+                "ContainerID": None,
                 "ContainerID": None,
                 "Orientation": None,
                 "Position": None,
