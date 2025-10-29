@@ -5,6 +5,8 @@ import plotly.graph_objects as go
 import plotly.express as px
 import matplotlib.pyplot as plt
 import ast
+import streamlit as st
+st.set_page_config(layout="wide")
 
 from fpdf import FPDF
 
@@ -308,6 +310,7 @@ if st.button("🔄 Reset"):
     st.session_state.clear()
 
     st.rerun()
+
 
 
 
