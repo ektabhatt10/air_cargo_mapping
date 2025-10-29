@@ -8,53 +8,23 @@ import ast
 
 from fpdf import FPDF
 
-def generate_full_pdf(assignments_df, summary_df, filename="full_report.pdf"):
-    pdf = FPDF()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
-    pdf.set_font("Arial", size=12)
+def generate_full_pdf(assignments_df, summary_df, table):
+    from reportlab.platypus import SimpleDocTemplate, Spacer
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet
 
-    # Title
-    pdf.cell(200, 10, txt="Container Optimization Report", ln=True, align="C")
-    pdf.ln(10)
+    doc = SimpleDocTemplate("full_report.pdf", pagesize=A4)
+    elements = []
+    styles = getSampleStyleSheet()
+    elements.append(Spacer(1, 12))
+    from reportlab.platypus import Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet
 
-    # --- Parcel Assignments Table ---
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(200, 10, txt="Parcel Assignments", ln=True)
-    pdf.set_font("Arial", size=10)
-
-    for _, row in assignments_df.iterrows():
-        line = f"{row['ParcelID']} -> {row['ContainerID']} | {row['Length_cm']} * {row['Width_cm']} * {row['Height_cm']} cm | {row['Weight_kg']} kg"
-        pdf.multi_cell(0, 8, txt=clean_text(line))
-
-    pdf.ln(10)
-
-    # --- Container Summary Table ---
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(200, 10, txt="Container Summary", ln=True)
-    pdf.set_font("Arial", size=10)
-
-    for _, row in summary_df.iterrows():
-        line = (
-            f"{row['ContainerID']}: "
-            f"{row['UsedVolume_m3']} m³ used / {row['TotalVolume_m3']} m³ total "
-            f"({row['VolumeUtilization_%']}%), "
-            f"{row['UsedWeight_kg']} kg used / {row['MaxPayload_kg']} kg max "
-            f"({row['WeightUtilization_%']}%)"
-        )
-        pdf.multi_cell(0, 8, txt=line)
-
-    pdf.output(filename)
-
-def clean_text(text):
-    return str(text).encode("latin-1", "ignore").decode("latin-1")
-
-st.set_page_config(layout="wide")
-show_utilization = False
-show_3d = False
-parcel_file= None
-container_file= None
-st.title("📦 Container Optimization App")
+    styles = getSampleStyleSheet()
+    elements.append(Paragraph("📦 Parcel Assignment Table", styles["Title"]))
+    elements.append(Spacer(1, 12))
+    elements.append(table)
+    doc.build(elements)
 
 # --- Step 1: Upload Files ---
 st.subheader("📁 Upload Input Files")
@@ -295,7 +265,37 @@ if "assignments_df" in st.session_state and "container_specs_dict" in st.session
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-    generate_full_pdf(assignments_df, summary_df)
+    table_data = assignments_df[[
+    "ParcelID", "ContainerID", "Container Brand",
+    "Length_cm", "Width_cm", "Height_cm",
+    "Weight_kg", "Position", "Orientation"
+    ]]
+
+    table_data["Position"] = table_data["Position"].apply(lambda x: f"{x[0]},{x[1]},{x[2]}" if x else "")
+    table_data["Orientation"] = table_data["Orientation"].apply(lambda x: f"{x[0]},{x[1]},{x[2]}" if x else "")
+
+    from reportlab.platypus import Table, TableStyle
+    from reportlab.lib import colors
+
+    # Convert to list of lists
+    header = ["ParcelID", "ContainerID", "Brand", "L*W*H (cm)", "Weight (kg)", "Position", "Orientation"]
+    rows = []
+
+    for _, row in table_data.iterrows():
+        dims = f"{row['Length_cm']}*{row['Width_cm']}*{row['Height_cm']}"
+        rows.append([
+            row["ParcelID"], row["ContainerID"], row["Container Brand"],
+            dims, row["Weight_kg"], row["Position"], row["Orientation"]
+        ])
+
+    table = Table([header] + rows)
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.black),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+    ]))
+
+    generate_full_pdf(assignments_df, summary_df, table)
     with open("full_report.pdf", "rb") as f:
         st.download_button(
             label="📥 Download Full Report as PDF",
@@ -308,6 +308,7 @@ if st.button("🔄 Reset"):
     st.session_state.clear()
 
     st.rerun()
+
 
 
 
