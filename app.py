@@ -245,7 +245,7 @@ if "assignments_df" in st.session_state and "container_specs_dict" in st.session
             for i, brand in enumerate(brands)
         }
 
-        for container_id in assignments_df["ContainerID"].unique():
+        for container_id in assignments_df["ContainerID"].dropna().unique():
             st.subheader(f"📦 {container_id} Layout")
 
             container_df = assignments_df[assignments_df["ContainerID"] == container_id]
@@ -308,6 +308,7 @@ if st.button("🔄 Reset"):
     st.session_state.clear()
 
     st.rerun()
+
 
 
 
