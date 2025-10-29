@@ -195,15 +195,6 @@ if "assignments_df" in st.session_state and "container_specs_dict" in st.session
     summary_df = pd.DataFrame(summary_rows)
     st.dataframe(summary_df)
 
-    generate_full_pdf(assignments_df, summary_df)
-    with open("full_report.pdf", "rb") as f:
-        st.download_button(
-            label="📥 Download Full Report as PDF",
-            data=f.read(),
-            file_name="container_optimization_report.pdf",
-            mime="application/pdf"
-        )
-
     # --- Container Utilization ---
     if view_option == "📊 Container Utilization":
         for container_id in assignments_df["ContainerID"].unique():
@@ -304,10 +295,20 @@ if "assignments_df" in st.session_state and "container_specs_dict" in st.session
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
+    generate_full_pdf(assignments_df, summary_df)
+    with open("full_report.pdf", "rb") as f:
+        st.download_button(
+            label="📥 Download Full Report as PDF",
+            data=f.read(),
+            file_name="container_optimization_report.pdf",
+            mime="application/pdf"
+        )
+
 if st.button("🔄 Reset"):
     st.session_state.clear()
 
     st.rerun()
+
 
 
 
