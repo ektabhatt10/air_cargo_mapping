@@ -251,7 +251,8 @@ def run_optimization(parcels_df, containers_df, settings, sharing_allowed):
 
     import itertools
     import numpy as np
-
+    
+    containers_df = containers_df[containers_df["Qty"] > 0]
     def select_containers_for_shipment(
         parcels_df,
         containers_df,
