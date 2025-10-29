@@ -115,7 +115,8 @@ if run_clicked:
         "max_containers": 0,
         "priority_rule": "lower_number_higher_priority"
     }
-
+    
+    containers_df = containers_df[containers_df["Quantity"] > 0]
     assignments_df = run_optimization(parcels_df, containers_df, settings, sharing_allowed)
 
     def safe_eval(val):
@@ -306,5 +307,6 @@ if st.button("🔄 Reset"):
     st.session_state.clear()
 
     st.rerun()
+
 
 
