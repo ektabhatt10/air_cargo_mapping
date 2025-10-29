@@ -538,7 +538,7 @@ def run_optimization(parcels_df, containers_df, settings, sharing_allowed):
                         break
 
         # --- Place parcel if a fit was found ---
-        current_leftover = best_fit["ContainerTotalVol"] - container_used_vol[cid]
+        container_brand_map = dict(zip(containers_df["ContainerID"], containers_df["Brand"]))
         if best_fit:
             cid = best_fit["ContainerID"]
             container_3D_state[cid].append({
