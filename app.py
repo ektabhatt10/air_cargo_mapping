@@ -37,6 +37,7 @@ if parcel_file:
     parcels_df = pd.read_excel(parcel_file, sheet_name="Parcels")
     st.write("📦 Parcels Preview")
     st.dataframe(parcels_df)
+    st.session_state["total_parcels_in_file"] = len(parcels_df)
 
 if container_file:
     containers_df = pd.read_excel(container_file, sheet_name="Containers")
@@ -88,7 +89,6 @@ if run_clicked:
         "max_containers": 0,
         "priority_rule": "lower_number_higher_priority"
     }
-    
     containers_df = containers_df[containers_df["Qty"] > 0]
     assignments_df = run_optimization(parcels_df, containers_df, settings, sharing_allowed)
 
@@ -125,20 +125,38 @@ if "assignments_df" in st.session_state and "container_specs_dict" in st.session
     st.subheader("📋 Parcel Assignments")
     st.dataframe(assignments_df)
 
-    total_parcels = len(assignments_df)
+    # --- Global summary (based on assignments_df) ---
+    total_parcels_in_inventory = st.session_state.get("total_parcels_in_file", len(assignments_df))
+    total_parcels_in_valid_lanes = len(assignments_df)
     placed_df = assignments_df[assignments_df["ContainerID"].notnull()]
-    containers_used = assignments_df["ContainerID"].nunique()
+    containers_used = placed_df["ContainerID"].nunique()
 
-    st.subheader("📦 Container Summary")
-    colA, colB, colC, colD = st.columns(4)
-    colA.metric("Total Parcels",total_parcels)
-    colB.metric(f"Placed Parcels",len(placed_df))
-    colC.metric("Containers Used",containers_used)
-    for cid in placed_df["ContainerID"].unique():
-        count = len(placed_df[placed_df["ContainerID"] == cid])
-        colD.metric(f"Parcels in {str(cid)}", count)
+    st.subheader("📦 Global Summary")
+    colA, colB, colC, colD= st.columns(4)
+    colA.metric("Total Parcels in File", total_parcels_in_inventory)
+    colB.metric("Parcels in Valid Trade Lanes", total_parcels_in_valid_lanes)
+    colC.metric("Placed Parcels", len(placed_df))
+    colD.metric("Containers Used", containers_used)
+
+    # --- Per-trade-lane summary ---
+    st.subheader("🛫 Trade Lane Summary")
+
+    lane_summary = (
+        assignments_df
+        .groupby(["Origin Hub Airport", "Destination Hub Airport"])
+        .agg(
+            TotalParcels=("ParcelID", "count"),
+            PlacedParcels=("ContainerID", lambda x: x.notna().sum()),
+            ContainersUsed=("ContainerID", lambda x: x.dropna().nunique())
+        )
+        .reset_index()
+    )
+
+    st.dataframe(lane_summary)
+
 
     # 📦 Container Summary Table
+    st.subheader("🚚 Container Summary")
     summary_rows = []
     for container_id in assignments_df["ContainerID"].dropna().unique():
         container_df = assignments_df[assignments_df["ContainerID"] == container_id]
@@ -217,7 +235,7 @@ if "assignments_df" in st.session_state and "container_specs_dict" in st.session
                 st.warning(f"Unknown container: {container_id}")
                 continue
 
-            fig3d = go.Figure()
+            fig3d = go.Figure() 
             fig3d.add_trace(go.Scatter3d(
                 x=[0, specs["L (cm)"]], y=[0, specs["W (cm)"]], z=[0, specs["H (cm)"]],
                 mode='markers',
@@ -259,7 +277,7 @@ if "assignments_df" in st.session_state and "container_specs_dict" in st.session
             st.plotly_chart(fig3d, use_container_width=True)
 
     # --- Export Results ---
-    with open("optimization_results.xlsx", "rb") as f:
+    with open("C:/Users/ektab/container_packing_results.xlsx", "rb") as f:
         st.download_button(
             label="📥 Download Results as Excel",
             data=f.read(),
@@ -268,7 +286,7 @@ if "assignments_df" in st.session_state and "container_specs_dict" in st.session
         )
 
     table_data = assignments_df[[
-    "ParcelID", "ContainerID", "Container Brand",
+    "Origin Hub Airport","Destination Hub Airport","ParcelID", "ContainerID", "Container Brand",
     "Length_cm", "Width_cm", "Height_cm",
     "Weight_kg", "Position", "Orientation"
     ]]
@@ -304,23 +322,8 @@ if "assignments_df" in st.session_state and "container_specs_dict" in st.session
             data=f.read(),
             file_name="container_optimization_report.pdf",
             mime="application/pdf"
-        )
+        )    
 
 if st.button("🔄 Reset"):
     st.session_state.clear()
-
     st.rerun()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
