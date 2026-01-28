@@ -5,13 +5,149 @@ def run_optimization(parcels_df, containers_df, settings, sharing_allowed):
     import pandas as pd
     import numpy as np
 
-    # Preview the data
-    print("Parcels:")
-    import streamlit as st
+    # STEP 1: Normalize inputs and load reference sheets
+
+    # 1) Normalize column names to avoid mismatches
+    for df in (parcels_df, containers_df):
+        df.columns = df.columns.str.strip()
+
+    # 2) Load Hubs Dictionary and Trade Lane–Pricing sheets (same workbook)
+    hubs_df = pd.read_excel("Trade Lane- Pricing Mapping.xlsx", sheet_name="Hubs Dictionary")
+    pricing_df = pd.read_excel("Trade Lane- Pricing Mapping.xlsx", sheet_name="Trade Lane-Pricing")
+
+    # 3) Normalize hubs and pricing headers
+    hubs_df.columns = hubs_df.columns.str.strip()
+    pricing_df.columns = pricing_df.columns.str.strip()
+
+    import math
+    def haversine(lat1, lon1, lat2, lon2):
+        R = 6371  # Earth radius in km
+        dlat = math.radians(lat2 - lat1)
+        dlon = math.radians(lon2 - lon1)
+        a = (
+            math.sin(dlat/2)**2
+            + math.cos(math.radians(lat1))
+            * math.cos(math.radians(lat2))
+            * math.sin(dlon/2)**2
+        )
+        c = 2 * math.asin(math.sqrt(a))
+        return R * c
+
+    class HubMapper:
+        def __init__(self, hub_df):
+            # Clean copy
+            self.hub_df = hub_df.copy()
+            self.hub_df.columns = [c.strip() for c in self.hub_df.columns]
+
+            # Dictionary of ALL airports with coordinates
+            self.airport_coords = {}
+
+            for _, row in self.hub_df.iterrows():
+                code = str(row["Hub Airport Code"]).strip()
+                lat = row["Latitude"]
+                lon = row["Longitude"]
+
+                # Skip missing coordinates
+                if pd.isna(lat) or pd.isna(lon):
+                    continue
+
+                try:
+                    lat = float(lat)
+                    lon = float(lon)
+                except:
+                    # Clean strings like "153,11" → "153.11"
+                    lat = float(str(lat).replace(",", "."))
+                    lon = float(str(lon).replace(",", "."))
+
+                self.airport_coords[code] = (lat, lon)
+
+            # Set of TRUE hubs
+            self.hub_codes = set(
+                self.hub_df[self.hub_df["Is Hub"].str.upper() == "YES"]["Hub Airport Code"]
+            )
+
+        def find_nearest_hub(self, airport_code):
+            """
+            Find nearest hub to a non-hub airport.
+            """
+            if airport_code not in self.airport_coords:
+                return None
+
+            lat1, lon1 = self.airport_coords[airport_code]
+
+            min_dist = float("inf")
+            nearest_hub = None
+
+            for hub in self.hub_codes:
+                lat2, lon2 = self.airport_coords.get(hub, (None, None))
+                if lat2 is None:
+                    continue
+
+                dist = haversine(lat1, lon1, lat2, lon2)
+                if dist < min_dist:
+                    min_dist = dist
+                    nearest_hub = hub
+
+            return nearest_hub
+
+        def map_airport_to_hub(self, airport_code):
+            """
+            Map any airport (hub or non-hub) to the correct hub.
+            """
+            airport_code = str(airport_code).strip()
+
+            # If airport is already a hub → return it
+            if airport_code in self.hub_codes:
+                return airport_code
+
+            # If we have coordinates → find nearest hub
+            if airport_code in self.airport_coords:
+                return self.find_nearest_hub(airport_code)
+
+            # If no coordinates → cannot map
+            return None    
+    hub_mapper = HubMapper(hubs_df)
+
+    # 6) Add derived hub columns
+    parcels_df["Origin Hub Airport"] = parcels_df["Origin Airport"].apply(
+    hub_mapper.map_airport_to_hub
+    )
+    parcels_df["Destination Hub Airport"] = parcels_df["Destination Airport"].apply(
+        hub_mapper.map_airport_to_hub
+    )
+    containers_df["Origin Hub Airport"] = containers_df["Origin Airport"].apply(
+        hub_mapper.map_airport_to_hub
+    )
+    containers_df["Destination Hub Airport"] = containers_df["Destination Airport"].apply(
+        hub_mapper.map_airport_to_hub
+    )
+
+    # 7) Build trade lane pairs from the pricing sheet (same workbook)
+    trade_pairs = set(zip(
+        pricing_df["Origin Airport"].astype(str).str.strip(),
+        pricing_df["Destination Airport"].astype(str).str.strip()
+    ))
+
+    # 8) Filter by trade lanes using hub columns (no streamlit import here)
+    print("Parcels (pre-filter):")
     print(parcels_df.head())
 
-    print("\nContainers:")
+    parcels_df = parcels_df[
+        parcels_df.apply(
+            lambda row: (row["Origin Hub Airport"], row["Destination Hub Airport"]) in trade_pairs,
+            axis=1
+        )
+    ]
+
+    print("\nContainers (pre-filter):")
     print(containers_df.head())
+
+    containers_df = containers_df[
+        containers_df.apply(
+            lambda row: (row["Origin Hub Airport"], row["Destination Hub Airport"]) in trade_pairs,
+            axis=1
+        )
+    ]
 
     # -------------------------
     # CLEARANCE (units: centimetres)
@@ -287,6 +423,19 @@ def run_optimization(parcels_df, containers_df, settings, sharing_allowed):
                 "chargeable_weight_kg": chargeable_weight_kg
             })
 
+        if not container_info:
+            print("⚠️ No containers available after filtering. Check trade lanes and Qty values.")
+            return {
+                "container_ids": [],
+                "total_container_vol_m3": 0,
+                "gross_weight_kg": 0,
+                "volumetric_weight_kg": 0,
+                "chargeable_weight_kg": 0,
+                "utilization_pct": 0,
+                "reason": "No containers available"
+            }
+
+
         # --- Stage 1: Feasible single containers ---
         feasible_single = []
         for c in container_info:
@@ -431,166 +580,275 @@ def run_optimization(parcels_df, containers_df, settings, sharing_allowed):
         ascending=[False, False, False]
     ).reset_index(drop=True)
 
-    # --- CELL 2: call the selector ---
-    filtered_df = filter_placeable_parcels(parcels_df, containers_df)
-    share_allowed = False
-
-    selector_result = select_containers_for_shipment(
-        parcels_df=filter_placeable_parcels(parcels_df_sorted, containers_df),
-        containers_df=containers_df,
-        share_allowed=False,
-        vol_divisor=6000,
-        max_comb=3,
-        topN_for_combos=12,
-        strategy="balanced"
+    # FINAL hub mapping after sorting
+    parcels_df_sorted["Origin Hub Airport"] = parcels_df_sorted["Origin Airport"].apply(
+        hub_mapper.map_airport_to_hub
+    )
+    parcels_df_sorted["Destination Hub Airport"] = parcels_df_sorted["Destination Airport"].apply(
+        hub_mapper.map_airport_to_hub
     )
 
-    selected_container_ids = selector_result["container_ids"]
-    containers_df_selected = containers_df[containers_df["ContainerID"].isin(selected_container_ids)].copy()
+    # --- CELL 2: multi-lane container selection and packing ---
 
-    # --------- Optimized 3D Best Fit loop with chargeable weight ----------
+    share_allowed = False
+
+    # All assignments across all lanes
     assignments = []
 
-    # Initialize container states
-    container_3D_state = {cid: [] for cid in containers_df_selected["ContainerID"]}
-    container_used_vol = {cid: 0 for cid in containers_df_selected["ContainerID"]}
-    container_used_weight = {cid: 0.0 for cid in containers_df_selected["ContainerID"]}
+    # Global container state across lanes (keyed by ContainerID)
+    container_3D_state = {}
+    container_used_vol = {}
+    container_used_weight = {}
 
     # Ensure Stackable column exists
     if "Stackable" not in parcels_df_sorted.columns:
         parcels_df_sorted["Stackable"] = True
 
-    for idx, parcel in parcels_df_sorted.iterrows():
-        best_fit = None
-        min_waste = float("inf")
-        remaining_parcels = len(parcels_df_sorted) - idx
-        factor_remaining = 1 + (remaining_parcels / len(parcels_df_sorted))
-        parcel_vol = float(parcel["Volume_cm3"])
-        parcel_wt = float(parcel["ChargeableWeight_kg"])
-        orientations = parcel["Orientations"]
+    # Get unique trade lanes (by hubs)
+    lanes = (
+        parcels_df_sorted[["Origin Hub Airport", "Destination Hub Airport"]]
+        .drop_duplicates()
+        .reset_index(drop=True)
+    )
 
-        # --- Sort selected containers by available volume descending ---
-        containers_df_sorted = containers_df_selected.copy()
-        containers_df_sorted["available_vol"] = containers_df_sorted["Volume_cm3"] - containers_df_sorted["ContainerID"].map(container_used_vol)
-        containers_df_sorted = containers_df_sorted.sort_values(by="available_vol", ascending=False)
+    print("🛫 Lanes to optimize:")
+    print(lanes)
+    used_container_ids = set()
+    for _, lane in lanes.iterrows():
+        origin_hub = lane["Origin Hub Airport"]
+        dest_hub = lane["Destination Hub Airport"]
 
-        for _, container in containers_df_sorted.iterrows():
-            cid = container["ContainerID"]
-            container_dim = (container["L (cm)"], container["W (cm)"], container["H (cm)"])
-            container_total_vol = float(container["Volume_cm3"])
-            container_max_wt = float(container["Maximum Payload (kg)"])
-            used_vol = container_used_vol.get(cid, 0)
-            used_wt = container_used_weight.get(cid, 0)
-            available_vol = container_total_vol - used_vol
-            available_wt = container_max_wt - used_wt
-            placed_parcels = container_3D_state[cid]
+        print(f"\n🔹 Optimizing lane: {origin_hub} → {dest_hub}")
 
-            # Skip if parcel cannot fit by volume or weight
-            if parcel_vol > available_vol or parcel_wt > available_wt:
-                continue
+        # Filter parcels for this lane
+        parcels_lane = parcels_df_sorted[
+            (parcels_df_sorted["Origin Hub Airport"] == origin_hub) &
+            (parcels_df_sorted["Destination Hub Airport"] == dest_hub)
+        ].copy()
 
-            for orientation in orientations:
-                Lp, Wp, Hp = orientation
+        if parcels_lane.empty:
+            print(f"  ⚠️ No parcels for lane {origin_hub} → {dest_hub}, skipping.")
+            continue
 
-                # --- Generate candidate positions ---
-                # Wall clearance
-                wall_L = float(settings.get("wall_clearance_L_cm", 0))
-                wall_W = float(settings.get("wall_clearance_W_cm", 0))
-                wall_H = float(settings.get("wall_clearance_H_cm", 0))
-                
-                # Inter-box clearance
-                inter_L = float(settings.get("inter_box_clearance_L_cm", 0))
-                inter_W = float(settings.get("inter_row_clearance_W_cm", 0))
-                candidate_positions = [(wall_L, wall_W, 0)]
-                for existing in placed_parcels:
-                    ex, ey, ez = existing["X"], existing["Y"], existing["Z"]
-                    eL, eW, eH = existing["L"], existing["W"], existing["H"]
+        # Filter containers for this lane
+        containers_lane = containers_df[
+            (containers_df["Origin Hub Airport"] == origin_hub) &
+            (containers_df["Destination Hub Airport"] == dest_hub)
+        ].copy()
 
-                    candidate_positions.append((ex + eL + inter_L, ey, ez))
-                    candidate_positions.append((ex, ey + eW + inter_W, ez))
-                    # --- stacking logic ---
-                    if existing["Stackable"]:
-                        candidate_positions.append((ex, ey, ez + eH))
-                    else:
-                        # Non-stackable: only place above if weight <= 32 kg
-                        if parcel_wt <= 32:
+        if containers_lane.empty:
+            print(f"  ⚠️ No containers for lane {origin_hub} → {dest_hub}, skipping.")
+            continue
+
+        # Filter placeable parcels for this lane
+        parcels_lane_placeable = filter_placeable_parcels(parcels_lane, containers_lane)
+
+        if parcels_lane_placeable.empty:
+            print(f"  ⚠️ No placeable parcels for lane {origin_hub} → {dest_hub}, skipping.")
+            continue
+
+        # Select containers for this lane
+        selector_result = select_containers_for_shipment(
+            parcels_df=parcels_lane_placeable,
+            containers_df=containers_lane,
+            share_allowed=False,
+            vol_divisor=6000,
+            max_comb=3,
+            topN_for_combos=12,
+            strategy="balanced"
+        )
+
+        selected_container_ids = selector_result["container_ids"]
+        if not selected_container_ids:
+            print(f"  ⚠️ No containers selected for lane {origin_hub} → {dest_hub}, skipping.")
+            continue
+
+        containers_df_selected = containers_lane[
+            containers_lane["ContainerID"].isin(selected_container_ids)
+        ].copy()
+
+        # Initialize container state entries if not already present
+        for cid in containers_df_selected["ContainerID"]:
+            used_container_ids.add(cid)
+            
+            if cid not in container_3D_state:
+                container_3D_state[cid] = []
+                container_used_vol[cid] = 0
+                container_used_weight[cid] = 0.0
+
+        # Sort parcels in this lane (reuse existing sort logic)
+        parcels_lane_sorted = parcels_lane.sort_values(
+            by=["Volume_cm3", "ChargeableWeight_kg", "BaseArea_cm2"],
+            ascending=[False, False, False]
+        ).reset_index(drop=True)
+
+        # 3D packing for this lane
+        for idx, parcel in parcels_lane_sorted.iterrows():
+            best_fit = None
+            min_waste = float("inf")
+            remaining_parcels = len(parcels_lane_sorted) - idx
+            factor_remaining = 1 + (remaining_parcels / len(parcels_lane_sorted))
+            parcel_vol = float(parcel["Volume_cm3"])
+            parcel_wt = float(parcel["ChargeableWeight_kg"])
+            orientations = parcel["Orientations"]
+
+            # Sort selected containers by available volume descending
+            containers_df_sorted_lane = containers_df_selected.copy()
+            containers_df_sorted_lane["available_vol"] = containers_df_sorted_lane["Volume_cm3"] - containers_df_sorted_lane["ContainerID"].map(container_used_vol)
+            containers_df_sorted_lane = containers_df_sorted_lane.sort_values(by="available_vol", ascending=False)
+
+            for _, container in containers_df_sorted_lane.iterrows():
+                cid = container["ContainerID"]
+                container_dim = (container["L (cm)"], container["W (cm)"], container["H (cm)"])
+                container_total_vol = float(container["Volume_cm3"])
+                container_max_wt = float(container["Maximum Payload (kg)"])
+                used_vol = container_used_vol.get(cid, 0)
+                used_wt = container_used_weight.get(cid, 0)
+                available_vol = container_total_vol - used_vol
+                available_wt = container_max_wt - used_wt
+                placed_parcels = container_3D_state[cid]
+
+                # Skip if parcel cannot fit by volume or weight
+                if parcel_vol > available_vol or parcel_wt > available_wt:
+                    continue
+
+                for orientation in orientations:
+                    Lp, Wp, Hp = orientation
+
+                    # --- Generate candidate positions ---
+                    wall_L = float(settings.get("wall_clearance_L_cm", 0))
+                    wall_W = float(settings.get("wall_clearance_W_cm", 0))
+                    wall_H = float(settings.get("wall_clearance_H_cm", 0))
+
+                    inter_L = float(settings.get("inter_box_clearance_L_cm", 0))
+                    inter_W = float(settings.get("inter_row_clearance_W_cm", 0))
+
+                    candidate_positions = [(wall_L, wall_W, 0)]
+                    for existing in placed_parcels:
+                        ex, ey, ez = existing["X"], existing["Y"], existing["Z"]
+                        eL, eW, eH = existing["L"], existing["W"], existing["H"]
+
+                        candidate_positions.append((ex + eL + inter_L, ey, ez))
+                        candidate_positions.append((ex, ey + eW + inter_W, ez))
+
+                        if existing["Stackable"]:
                             candidate_positions.append((ex, ey, ez + eH))
+                        else:
+                            if parcel_wt <= 32:
+                                candidate_positions.append((ex, ey, ez + eH))
 
-                # --- Test candidate positions ---
-                for pos in candidate_positions:
-                    can_place, reason = can_place_3D(
-                        orientation, pos, container_dim, placed_parcels, parcel["Stackable"], settings,
-                        debug=False, parcel_id=parcel["ParcelID"], container_id=cid
-                    )
+                    # --- Test candidate positions ---
+                    for pos in candidate_positions:
+                        can_place, reason = can_place_3D(
+                            orientation, pos, container_dim, placed_parcels, parcel["Stackable"], settings,
+                            debug=False, parcel_id=parcel["ParcelID"], container_id=cid
+                        )
 
-                    if can_place:
-                        leftover_after = container_total_vol - (used_vol + parcel_vol)
-                        weighted_leftover = leftover_after * factor_remaining
+                        if can_place:
+                            leftover_after = container_total_vol - (used_vol + parcel_vol)
+                            weighted_leftover = leftover_after * factor_remaining
 
-                        if weighted_leftover < min_waste:
-                            min_waste = weighted_leftover
-                            best_fit = {
-                                "ContainerID": cid,
-                                "Orientation": orientation,
-                                "Position": tuple(map(int, pos)),
-                                "LeftoverAfter": leftover_after,
-                                "ContainerTotalVol": container_total_vol
-                            }
-                        break
+                            if weighted_leftover < min_waste:
+                                min_waste = weighted_leftover
+                                best_fit = {
+                                    "ContainerID": cid,
+                                    "Orientation": orientation,
+                                    "Position": tuple(map(int, pos)),
+                                    "LeftoverAfter": leftover_after,
+                                    "ContainerTotalVol": container_total_vol
+                                }
+                            break
 
-        # --- Place parcel if a fit was found ---
-        container_brand_map = dict(zip(containers_df["ContainerID"], containers_df["Brand"]))
-        if best_fit:
-            cid = best_fit["ContainerID"]
-            container_3D_state[cid].append({
-                "ParcelID": parcel["ParcelID"],
-                "X": best_fit["Position"][0],
-                "Y": best_fit["Position"][1],
-                "Z": best_fit["Position"][2],
-                "L": best_fit["Orientation"][0],
-                "W": best_fit["Orientation"][1],
-                "H": best_fit["Orientation"][2],
-                "Stackable": parcel["Stackable"],
-                "ChargeableWeight_kg": parcel_wt,
-                "Weight_kg": parcel["Weight (kg)"]
-            })
-            container_used_vol[cid] += parcel_vol
-            container_used_weight[cid] += parcel_wt
+            # --- Place parcel if a fit was found ---
+            container_brand_map = dict(zip(containers_df["ContainerID"], containers_df["Brand"]))
+            if best_fit:
+                cid = best_fit["ContainerID"]
+                container_3D_state[cid].append({
+                    "ParcelID": parcel["ParcelID"],
+                    "X": best_fit["Position"][0],
+                    "Y": best_fit["Position"][1],
+                    "Z": best_fit["Position"][2],
+                    "L": best_fit["Orientation"][0],
+                    "W": best_fit["Orientation"][1],
+                    "H": best_fit["Orientation"][2],
+                    "Stackable": parcel["Stackable"],
+                    "ChargeableWeight_kg": parcel_wt,
+                    "Weight_kg": parcel["Weight (kg)"]
+                })
+                container_used_vol[cid] += parcel_vol
+                container_used_weight[cid] += parcel_wt
 
-            current_leftover = best_fit["ContainerTotalVol"] - container_used_vol[cid]
-            assignments.append({
-                "ParcelID": parcel["ParcelID"],
-                "Length_cm": parcel["L (cm)"],
-                "Width_cm": parcel["W (cm)"],
-                "Height_cm": parcel["H (cm)"],
-                "Weight_kg": parcel["Weight (kg)"],
-                "Brand": parcel["Brand"],
-                "ContainerID": cid,
-                "Container Brand":container_brand_map.get(cid, "Unknown"),
-                "Orientation": best_fit["Orientation"],
-                "Position": best_fit["Position"],
-                "LeftoverVolume": current_leftover,
-                "ContainerChargeableUsed": container_used_weight[cid]
-            })
-        else:
-            print(f"⚠️ No fit found for {parcel['ParcelID']}")
-            assignments.append({
-                "ParcelID": parcel["ParcelID"],
-                "Length_cm": parcel["L (cm)"],
-                "Width_cm": parcel["W (cm)"],
-                "Height_cm": parcel["H (cm)"],
-                "Weight_kg": parcel["Weight (kg)"],
-                "Brand": parcel["Brand"],
-                "ContainerID": None,
-                "ContainerID": None,
-                "Orientation": None,
-                "Position": None,
-                "LeftoverVolume": None,
-                "ContainerChargeableUsed": None
-            })
+                current_leftover = best_fit["ContainerTotalVol"] - container_used_vol[cid]
+                assignments.append({
+                    "Origin Hub Airport": parcel["Origin Hub Airport"],
+                    "Destination Hub Airport": parcel["Destination Hub Airport"],
+                    "ParcelID": parcel["ParcelID"],
+                    "Length_cm": parcel["L (cm)"],
+                    "Width_cm": parcel["W (cm)"],
+                    "Height_cm": parcel["H (cm)"],
+                    "Weight_kg": parcel["Weight (kg)"],
+                    "Brand": parcel["Brand"],
+                    "ContainerID": cid,
+                    "Container Brand": container_brand_map.get(cid, "Unknown"),
+                    "Orientation": best_fit["Orientation"],
+                    "Position": best_fit["Position"],
+                    "LeftoverVolume": current_leftover,
+                    "ContainerChargeableUsed": container_used_weight[cid]
+                })
+            else:
+                print(f"⚠️ No fit found for {parcel['ParcelID']} on lane {origin_hub} → {dest_hub}")
+                assignments.append({
+                    "Origin Hub Airport": parcel["Origin Hub Airport"],
+                    "Destination Hub Airport": parcel["Destination Hub Airport"],
+                    "ParcelID": parcel["ParcelID"],
+                    "Length_cm": parcel["L (cm)"],
+                    "Width_cm": parcel["W (cm)"],
+                    "Height_cm": parcel["H (cm)"],
+                    "Weight_kg": parcel["Weight (kg)"],
+                    "Brand": parcel["Brand"],
+                    "ContainerID": None,
+                    "Container Brand": None,
+                    "Orientation": None,
+                    "Position": None,
+                    "LeftoverVolume": None,
+                    "ContainerChargeableUsed": None
+                })
 
-    # --- Convert leftover volume from cm^3 to m^3 ---
-    assignments_df = pd.DataFrame(assignments)
+   # --- Convert leftover volume from cm^3 to m^3 ---
+    assignments_df  = pd.DataFrame(assignments)
+    print("Assignments DF columns:", assignments_df.columns.tolist())
+    print(assignments_df.head())
+
+    # If nothing was assigned, bail out early with well-formed empty frames
+    if assignments_df.empty:
+        print("⚠️ No assignments created — no lanes had placeable parcels/containers.")
+        assignments_df = pd.DataFrame(columns=[
+            "Origin Hub Airport", "Destination Hub Airport", "ParcelID",
+            "Length_cm", "Width_cm", "Height_cm", "Weight_kg", "Brand",
+            "ContainerID", "Container Brand", "Orientation", "Position",
+            "LeftoverVolume", "ContainerChargeableUsed"
+        ])
+        container_summary_df = pd.DataFrame(columns=[
+            "ContainerID", "UsedVolume_m3", "TotalVolume_m3",
+            "VolumeUtilization_%", "UsedWeight_kg",
+            "MaxPayload_kg", "WeightUtilization_%", "ParcelsCount"
+        ])
+        return assignments_df
+
+    # Only do groupby if we actually have rows
+    lane_summary = (
+        assignments_df
+        .groupby(["Origin Hub Airport", "Destination Hub Airport"])
+        .agg(
+            TotalParcels=("ParcelID", "count"),
+            PlacedParcels=("ContainerID", lambda x: x.notna().sum()),
+            ContainersUsed=("ContainerID", lambda x: x.dropna().nunique())
+        )
+        .reset_index()
+    )
+    print("📦 Trade Lane Summary:")
+    print(lane_summary)
+    
     if "LeftoverVolume" in assignments_df.columns:
         assignments_df["LeftoverVolume_m3"] = (assignments_df["LeftoverVolume"] / 1e6).round(3)
         assignments_df = assignments_df.drop(columns=["LeftoverVolume"])
@@ -603,7 +861,7 @@ def run_optimization(parcels_df, containers_df, settings, sharing_allowed):
     print(assignments_df.head(60))
 
     container_summary = []
-    for cid in selected_container_ids:  # use only selected containers
+    for cid in used_container_ids:  # use only selected containers
         # Volume calculations
         used_vol_cm3 = container_used_vol.get(cid, 0)
         total_vol_cm3 = containers_df.loc[containers_df["ContainerID"] == cid, "Volume_cm3"].values[0]
@@ -635,9 +893,8 @@ def run_optimization(parcels_df, containers_df, settings, sharing_allowed):
     )]
 
     print(f"🚫 Unplaceable parcels: {len(unplaceable_df)}")
-    if not unplaceable_df.empty:
-        st.dataframe(unplaceable_df[["ParcelID", "L (cm)", "W (cm)", "H (cm)", "Weight (kg)"]])
-      
+    import streamlit as st
+    
     # --- Export both DataFrames to Excel ---
     output_path = "optimization_results.xlsx"
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
