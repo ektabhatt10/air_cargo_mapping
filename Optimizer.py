@@ -636,7 +636,7 @@ def run_optimization(parcels_df, containers_df, settings, sharing_allowed):
 
     print(f"🚫 Unplaceable parcels: {len(unplaceable_df)}")
     if not unplaceable_df.empty:
-        display(unplaceable_df[["ParcelID", "L (cm)", "W (cm)", "H (cm)", "Weight (kg)"]])
+        st.dataframe(unplaceable_df[["ParcelID", "L (cm)", "W (cm)", "H (cm)", "Weight (kg)"]])
       
     # --- Export both DataFrames to Excel ---
     output_path = "optimization_results.xlsx"
